@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.1//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_2.dtd'>
+<nta>
+	<declaration>// heartMode values:
+//  0 - RANDOM
+//  1 - MANUAL
+//  2 - TEST
+int heartMode = 0;
+// paceMode values:
+//  0 - NORMAL
+//  1 - SLEEP
+//  2 - EXERCISE
+//  3 - MANUAL
+int paceMode = 0;
+broadcast chan AS, VS, AP, VP;
+
+// Pacemaker Variables
+clock pTime;
+int LRI[4] = {2000,
+              1500,
+              600,
+              2000};
+int URI[4] = {1000,
+              600,
+              343,
+              343};
+
+// Heart Variables
+clock hTime;</declaration>
+	<template>
+		<name>Pacemaker</name>
+		<location id="id0" x="25" y="-59">
+		</location>
+		<init ref="id0"/>
+		<transition>
+			<source ref="id0"/>
+			<target ref="id0"/>
+			<label kind="guard" x="-161" y="0">pTime &gt; LRI[paceMode]</label>
+			<label kind="synchronisation" x="-178" y="59">VP!</label>
+			<nail x="-1" y="77"/>
+			<nail x="-391" y="77"/>
+			<nail x="-391" y="-59"/>
+			<nail x="-18" y="-59"/>
+		</transition>
+		<transition>
+			<source ref="id0"/>
+			<target ref="id0"/>
+			<label kind="synchronisation" x="-178" y="-212">AP!</label>
+			<nail x="8" y="-194"/>
+			<nail x="-391" y="-194"/>
+			<nail x="-391" y="-59"/>
+		</transition>
+		<transition>
+			<source ref="id0"/>
+			<target ref="id0"/>
+			<label kind="guard" x="42" y="-8">pTime &gt; URI[paceMode]</label>
+			<label kind="synchronisation" x="119" y="59">VS?</label>
+			<label kind="assignment" x="255" y="-8">pTime = 0</label>
+			<nail x="25" y="77"/>
+			<nail x="331" y="76"/>
+			<nail x="340" y="-51"/>
+		</transition>
+		<transition>
+			<source ref="id0"/>
+			<target ref="id0"/>
+			<label kind="synchronisation" x="43" y="-211">AS?</label>
+			<nail x="25" y="-194"/>
+			<nail x="161" y="-194"/>
+		</transition>
+	</template>
+	<template>
+		<name x="5" y="5">Heart</name>
+		<location id="id1" x="323" y="93">
+		</location>
+		<init ref="id1"/>
+		<transition>
+			<source ref="id1"/>
+			<target ref="id1"/>
+			<label kind="guard" x="187" y="144">heartMode == 0</label>
+			<label kind="synchronisation" x="179" y="212">VS!</label>
+			<nail x="297" y="229"/>
+			<nail x="34" y="229"/>
+			<nail x="34" y="93"/>
+			<nail x="280" y="93"/>
+		</transition>
+		<transition>
+			<source ref="id1"/>
+			<target ref="id1"/>
+			<label kind="guard" x="187" y="0">heartMode == 0</label>
+			<label kind="synchronisation" x="179" y="-59">AS!</label>
+			<nail x="306" y="-42"/>
+			<nail x="34" y="-42"/>
+			<nail x="34" y="93"/>
+		</transition>
+		<transition>
+			<source ref="id1"/>
+			<target ref="id1"/>
+			<label kind="synchronisation" x="341" y="212">VP?</label>
+			<nail x="323" y="229"/>
+			<nail x="442" y="229"/>
+		</transition>
+		<transition>
+			<source ref="id1"/>
+			<target ref="id1"/>
+			<label kind="synchronisation" x="341" y="-59">AP?</label>
+			<nail x="323" y="-42"/>
+			<nail x="459" y="-42"/>
+		</transition>
+	</template>
+	<system>// Place template instantiations here.
+P = Pacemaker();
+H = Heart();
+// List one or more processes to be composed into a system.
+system P, H;
+    </system>
+	<queries>
+	</queries>
+</nta>
