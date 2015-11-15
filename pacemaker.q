@@ -3,32 +3,32 @@
 /*
 
 */
+A.VReceived && cV > LRI[paceMode] --> alarmSlow
+
+/*
+
+*/
+A.VReceived && cV < URI[paceMode] --> alarmFast
+
+/*
+
+*/
+A[] (L.BlinkAP imply cA == 0) && (L.BlinkVP imply cV == 0)
+
+/*
+
+*/
+A[] P.APSend imply (cV >= LRI[paceMode] - AVI_max) and (cV >= PVARP)
+
+/*
+
+*/
+A[] P.VPSend imply (cALast >= AVI_max and cALast > AVI_min) or (cVLast >= LRI[paceMode] and cVLast > URI[paceMode] and cVLast > VRP)
+
+/*
+
+*/
 A[] not fail
-
-/*
-
-*/
-A[] H.VSenseTooSoon imply not deadlock
-
-/*
-
-*/
-A[] H.C imply not deadlock
-
-/*
-
-*/
-A[] H.B imply not deadlock
-
-/*
-
-*/
-A[] H.D imply not deadlock
-
-/*
-
-*/
-A[] H.A imply not deadlock
 
 /*
 
