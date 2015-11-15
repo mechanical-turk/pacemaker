@@ -3,4 +3,34 @@
 /*
 
 */
+A[] not fail
+
+/*
+
+*/
+A[] H.VSenseTooSoon imply not deadlock
+
+/*
+
+*/
+A[] H.C imply not deadlock
+
+/*
+
+*/
+A[] H.B imply not deadlock
+
+/*
+
+*/
+A[] H.D imply not deadlock
+
+/*
+
+*/
+A[] H.A imply not deadlock
+
+/*
+
+*/
 A[] not deadlock
