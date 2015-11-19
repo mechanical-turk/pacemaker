@@ -36,7 +36,7 @@ void mode_switch_thread(void const * args) {
     while (true) {
         if (mode_switch_input) {
             // TODO process input
-            mode_switch_input == false
+            mode_switch_input = false;
         }
         Thread::wait(300);
     }
@@ -46,23 +46,18 @@ void mode_switch_thread(void const * args) {
 void heart_thread(void const * args) {
 }
 
-void light_led(DigitalOut channel, int duration) {
+void light_led(void const * args) {
+    DigitalOut * ch = (DigitalOut *) args;
+    DigitalOut channel = *ch;
     channel = 1;
-    Thread::wait(duration);
+    Thread::wait(200);
     channel = 0;
 }
 
-void leds_thread(void const * args) {
+void led_thread(void const * args) {
     while (true) {
         if (led_input) {
-            switch (last_keyboard) {
-                case 'a' :
-                    Thread light_led(ap_led, 200); 
-                    break;
-                case 's' :
-                    Thread light_led(as_led, 200); 
-                    break;
-            }
+            Thread led_temp(light_led, &ap_led); 
             led_input = false;
         }
     }
