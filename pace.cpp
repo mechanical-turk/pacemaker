@@ -1,6 +1,7 @@
 #include "mbed.h"
 #include "TextLCD.h"
 #include "rtos.h"
+#include "keyboard.cpp"
 #include <stdlib.h>
 
 #define AP 0x01
@@ -11,12 +12,7 @@
 #define AVI_max 100
 #define AVI_min 30
 #define PVARP 500
-#define VRP 500
-
-#define NORMAL 0
-#define SLEEP 1 
-#define EXERCISE 2
-#define MANUAL 3 
+#define VRP 500 
 
 #define AP_PIN p5
 #define AS_PIN p6
@@ -36,16 +32,27 @@ InterruptIn as_interrupt(AS_PIN);
 InterruptIn vs_interrupt(VS_PIN);
 DigitalOut ap_out(AP_PIN);
 DigitalOut vp_out(VP_PIN);
+
+enum Pacemode { NORMAL, SLEEP, EXERCISE, MANUAL };
+Pacemode pace_mode = NORMAL;
+
+bool mode_switch_input = false;
+bool manual_signal_input = false;
+char user_input = '~';
+char last_keyboard = ' ';
+
 int LRI[] = {2000, 1500, 600, 2000};
 int URI[] = {1000, 600, 343, 343};
-int mode = EXERCISE;
-bool mode_switch_input = false;
-char last_keyboard = ' ';
+
+Keyboard * keyboard;
+
 Timer cA;
 Timer cV;
 Thread * led_addr;
 Thread * display_addr;
 Thread * alarm_addr;
+
+int observation_interval = 0;
 
 void a_sense() {
     led_addr->signal_set(AS);
@@ -56,22 +63,62 @@ void v_sense() {
     display_addr->signal_set(VS);
 	alarm_addr->signal_set(VS);
 }
+void set_observation_interval() {
+    int i = 1;
+    observation_interval = 0;
+    while (keyboard->command[i] != '~') {
+        observation_interval = observation_interval * 10 + (keyboard->command[i] - '0');
+        i ++;
+    }
+}
+
+void interpret_command() {
+    if(keyboard->command[0] == 'o') {
+        set_observation_interval();
+        pc.printf("\n\rObservation interval set to: %d", observation_interval);
+    } else if (Keyboard::my_strequal(keyboard->command,"help",4)) {
+        pc.printf("THIS IS HELP");
+    } else {
+        user_input = keyboard->command[0];
+        mode_switch_input = true;
+        manual_signal_input = true;
+    }
+}
 
 void input_thread(void const * args) {
-    while (true) {
-        char c = pc.getc();
-        last_keyboard = c;
-        mode_switch_input = true;
+    keyboard->prompt();
+    keyboard->reset_command();
+    while(1) {
+        keyboard->last_keyboard = pc.getc();
+        keyboard->read_char(keyboard->last_keyboard);
+        
+        if (keyboard->last_keyboard != '\r') {
+            pc.putc(keyboard->last_keyboard);
+        }
+        
+        if (keyboard->last_keyboard == '\r' || keyboard->command_complete()) {
+            interpret_command();
+            keyboard->reset_command();
+            keyboard->prompt();
+        }
     }
 }
 
 void mode_switch_thread(void const * args) {
-    while (true) {
+    while(1) {
         if (mode_switch_input) {
-            // TODO process input
+            if (user_input == 'n' || user_input == 'N') {
+                pace_mode = NORMAL;
+            } else if (user_input == 'e' || user_input == 'E') {
+                pace_mode = EXERCISE;
+            } else if (user_input == 's' || user_input == 'S') {
+                pace_mode = SLEEP;
+            } else if (user_input == 'm' || user_input == 'M') {
+                pace_mode = MANUAL;
+            }
+            lcd.printf("Mode: %d, ",pace_mode);
             mode_switch_input = false;
-        }
-        Thread::wait(300);
+        }    
     }
 }
 
@@ -79,7 +126,7 @@ void pace_thread(void const * args) {
     bool state = 1;
     while (true) {
         if (state) {
-            if (cV.read_ms() > LRI[mode] - AVI_min) {
+            if (cV.read_ms() > LRI[pace_mode] - AVI_min) {
                 led_addr->signal_set(AP);
                 ap_out = 1;
                 cA.reset();
@@ -88,7 +135,7 @@ void pace_thread(void const * args) {
                 state = 0;
             }
         } else {
-            if (cV.read_ms() > LRI[mode] || cA.read_ms() > AVI_max) {
+            if (cV.read_ms() > LRI[pace_mode] || cA.read_ms() > AVI_max) {
                 led_addr->signal_set(VP);
                 display_addr->signal_set(VP);
 				alarm_addr->signal_set(VP);
@@ -154,10 +201,10 @@ void alarm_thread(void const * args) {
 	t.start();
 	bool first = true;
 	while (true) {
-        osEvent sig = Thread::signal_wait(0x00, LRI[mode] - t.read_ms());
+        osEvent sig = Thread::signal_wait(0x00, LRI[pace_mode] - t.read_ms());
         int signum = sig.value.signals;
         if ((signum & VP) || (signum & VS)) {
-			if (!first && t.read_ms() < URI[mode]) {
+			if (!first && t.read_ms() < URI[pace_mode]) {
 				lcd.locate(0, 1);
 				lcd.printf("ERR_FAST");
 				Thread::wait(5000);
@@ -182,6 +229,8 @@ void alarm_thread(void const * args) {
 }
 
 int main() {
+    // Initialize keyboard
+    keyboard = new Keyboard(&pc);
     // Initialize the clocks to some reasonable time
     cA.reset();
     cA.start();

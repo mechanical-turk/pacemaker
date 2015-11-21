@@ -40,6 +40,7 @@ bool mode_switch_input = false;
 bool manual_signal_input = false;
 char user_input = '~';
 char last_keyboard = ' ';
+
 Thread * led_addr;
 Thread * display_addr;
 Keyboard * keyboard;
