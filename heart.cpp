@@ -39,6 +39,7 @@ int mode = RANDOM;
 bool mode_switch_input = false;
 char last_keyboard = ' ';
 Thread * led_addr;
+Thread * display_addr;
 
 void a_pace() {
     led_addr->signal_set(AP);
@@ -46,6 +47,7 @@ void a_pace() {
 
 void v_pace() {
     led_addr->signal_set(VP);
+    display_addr->signal_set(VP);
 }
 
 void input_thread(void const * args) {
@@ -67,6 +69,20 @@ void mode_switch_thread(void const * args) {
         
 }
 
+void wait_v() {
+	while (true) {
+		osEvent sig = Thread::signal_wait(0x00);
+		int signum = sig.value.signals;
+		if (signum & AP) break;
+	}
+	while (true) {
+		osEvent sig = Thread::signal_wait(0x00);
+		int signum = sig.value.signals;
+		if (signum & VP) break;
+	}
+}
+
+
 void heart_thread(void const * args) {
     while (true) {
         if (mode == RANDOM) {
@@ -85,13 +101,12 @@ void heart_thread(void const * args) {
                     as_out = 1;
                     Thread::wait(20);
                     as_out = 0;
-					lcd.printf("AS\n\n");
                 } else {
                     target = VS;
                     vs_out = 1;
                     Thread::wait(20);
                     vs_out = 0;
-					lcd.printf("VS\n\n");
+					display_addr->signal_set(VS);
                 }
 				led_addr->signal_set(target);
             }
@@ -127,10 +142,26 @@ void led_thread(void const * args) {
     }
 }
 
-void alarm_thread(void const * args) {
-}
-
 void display_thread(void const * args) {
+    Timer t;
+    int interval = 10000;
+    int count = 0;
+    lcd.printf("Initialized\n\n");
+    t.reset();
+    t.start();
+    while (true) {
+        osEvent sig = Thread::signal_wait(0x00, interval - t.read_ms());
+        int signum = sig.value.signals;
+        if ((signum & VP) || (signum & VS)) {
+            count++;
+        } else {
+            double bpm = (double) count * 60000.0 / (double) interval;
+			lcd.locate(0,0);
+            lcd.printf("%f BPM", bpm);
+            count = 0;
+            t.reset();
+        }
+    }
 }
 
 int main() {
@@ -140,11 +171,11 @@ int main() {
     // Initialize the threads
     Thread leds(led_thread);
     led_addr = &leds;
+    Thread display(display_thread);
+	display_addr = &display;
     Thread keyboard(input_thread);
     Thread mode_switch(mode_switch_thread);
     Thread heart(heart_thread);
-    Thread alarm(alarm_thread);
-    Thread display(display_thread);
     
     while (1) { }
 }

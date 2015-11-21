@@ -45,6 +45,7 @@ Timer cA;
 Timer cV;
 Thread * led_addr;
 Thread * display_addr;
+Thread * alarm_addr;
 
 void a_sense() {
     led_addr->signal_set(AS);
@@ -53,6 +54,7 @@ void a_sense() {
 void v_sense() {
     led_addr->signal_set(VS);
     display_addr->signal_set(VS);
+	alarm_addr->signal_set(VS);
 }
 
 void input_thread(void const * args) {
@@ -88,7 +90,8 @@ void pace_thread(void const * args) {
         } else {
             if (cV.read_ms() > LRI[mode] || cA.read_ms() > AVI_max) {
                 led_addr->signal_set(VP);
-                display_addr->signal_set(VS);
+                display_addr->signal_set(VP);
+				alarm_addr->signal_set(VP);
                 vp_out = 1;
                 cV.reset();
                 Thread::wait(20);
@@ -137,11 +140,45 @@ void display_thread(void const * args) {
             count++;
         } else {
             double bpm = (double) count * 60000.0 / (double) interval;
-            lcd.printf("%f BPM\n\n", bpm);
+			lcd.locate(0,0);
+            lcd.printf("%f BPM", bpm);
             count = 0;
             t.reset();
         }
     }
+}
+
+void alarm_thread(void const * args) {
+	Timer t;
+	t.reset();
+	t.start();
+	bool first = true;
+	while (true) {
+        osEvent sig = Thread::signal_wait(0x00, LRI[mode] - t.read_ms());
+        int signum = sig.value.signals;
+        if ((signum & VP) || (signum & VS)) {
+			if (!first && t.read_ms() < URI[mode]) {
+				lcd.locate(0, 1);
+				lcd.printf("ERR_FAST");
+				Thread::wait(5000);
+				lcd.locate(0, 1);
+				lcd.printf("        ");
+				t.reset();
+				first = true;
+			} else {
+				t.reset();
+                first = false;
+			}
+		} else {
+			lcd.locate(0, 1);
+			lcd.printf("ERR_SLOW");
+			Thread::wait(5000);
+			lcd.locate(0, 1);
+			lcd.printf("        ");
+			t.reset();
+			first = true;
+		}
+	}
 }
 
 int main() {
@@ -160,6 +197,8 @@ int main() {
     led_addr = &leds;
     Thread display(display_thread);
     display_addr = &display;
+    Thread alarm(alarm_thread);
+	alarm_addr = &alarm;
     Thread keyboard(input_thread);
     Thread mode_switch(mode_switch_thread);
     Thread pace(pace_thread);
