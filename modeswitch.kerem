@@ -19,45 +19,56 @@ Heartmode heart_mode = RANDOM;
 bool mode_switch_input = false;
 bool manual_signal_input = false;
 
-char command[20];
-int command_index;
-char last_keyboard = '~';
+class Keyboard {
+    public:
+    char command[20];
+    int command_index;
+    char last_keyboard;
+    
+    Keyboard() {
+        last_keyboard = '~';
+    }
+    
+    void reset_command() {
+        for (int i = 0; i < 20; i++) {
+            command[i] = '~';
+        }
+        command_index = 0;
+    }
+    
+    void prompt() {
+        pc.puts("\n\r$ ");
+    }
+    
+    void read_char(char c) {
+        if (command_index < 20 && c != '\r') {
+            command[command_index] = c;
+            command_index ++;
+        }
+    }
+    
+    bool command_complete() {
+        return (command[0] != '~' && 
+            (!
+                (command[0] == 'o' || 
+                command[0] == 'O' ||
+                command[0] == 'h'
+                )
+            )
+        );
+    }
+};
+
+Keyboard *keyboard;
 char user_input = '~';
 
 int observation_interval = 0;
 
-void timer0_init(void)
-{
-    LPC_SC->PCONP |= 1<1;           //timer0 power on
-    LPC_TIM0->MR0 = 239800;         //10 msec interrupt, based on clock rate
-    LPC_TIM0->MCR = 3;              //interrupt and reset control
-    NVIC_EnableIRQ(TIMER0_IRQn);    //enable timer0 interrupt
-    LPC_TIM0->TCR = 1;              //enable Timer0
-}
-
-void prompt() {
-    pc.puts("\n\r$ ");
-}
-
-void reset_command() {
-    for (int i = 0; i < 20; i++) {
-        command[i] = '~';
-    }
-    command_index = 0;
-}
-
-void read_char(char c) {
-    if (command_index < 20) {
-        command[command_index] = c;
-        command_index ++;
-    }
-}
-
 void set_observation_interval() {
     int i = 1;
     observation_interval = 0;
-    while (command[i] != '~') {
-        observation_interval = observation_interval * 10 + (command[i] - '0');
+    while (keyboard->command[i] != '~') {
+        observation_interval = observation_interval * 10 + (keyboard->command[i] - '0');
         i ++;
     }
 }
@@ -73,30 +84,33 @@ bool my_strequal(char *c1, char *c2, int buffer_size) {
 }
 
 void interpret_command() {
-    if(command[0] == 'o') {
+    if(keyboard->command[0] == 'o') {
         set_observation_interval();
         pc.printf("\n\rObservation interval set to: %d", observation_interval);
-    } else if (my_strequal(command,"help",4)) {
+    } else if (my_strequal(keyboard->command,"help",4)) {
         pc.printf("THIS IS HELP");
     } else {
-        user_input = command[0];
+        user_input = keyboard->command[0];
         mode_switch_input = true;
         manual_signal_input = true;
     }
 }
 
 void keyboard_thread(void const * args) {
-    prompt();
-    reset_command();
+    keyboard->prompt();
+    keyboard->reset_command();
     while(1) {
-        last_keyboard = pc.getc();
-        if (last_keyboard == '\r') {
+        keyboard->last_keyboard = pc.getc();
+        keyboard->read_char(keyboard->last_keyboard);
+        
+        if (keyboard->last_keyboard != '\r') {
+            pc.putc(keyboard->last_keyboard);
+        }
+        
+        if (keyboard->last_keyboard == '\r' || keyboard->command_complete()) {
             interpret_command();
-            reset_command();
-            prompt();
-        } else {
-            read_char(last_keyboard);
-            pc.putc(last_keyboard);
+            keyboard->reset_command();
+            keyboard->prompt();
         }
     }
 }
@@ -133,6 +147,8 @@ void manual_signal_thread(void const * args) {
 }
 
 int main() {
+    keyboard = new Keyboard();
+    
     Thread keyboard(keyboard_thread);
     Thread manual_signal(manual_signal_thread);
     Thread mode_switch(mode_switch_thread);
