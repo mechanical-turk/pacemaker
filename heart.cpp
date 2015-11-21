@@ -1,6 +1,7 @@
 #include "mbed.h"
 #include "TextLCD.h"
 #include "rtos.h"
+#include "keyboard.cpp"
 #include <stdlib.h>
 
 #define AP          0x0001
@@ -12,10 +13,6 @@
 #define TO_TEST     0x0040
 #define MANUAL_AP   0x0080
 #define MANUAL_VP   0x0100
-
-#define RANDOM 0
-#define MANUAL 1  
-#define TEST 2
 
 #define AP_PIN p5
 #define AS_PIN p6
@@ -35,11 +32,19 @@ DigitalOut as_out(AS_PIN);
 DigitalOut vs_out(VS_PIN);
 InterruptIn ap_interrupt(AP_PIN);
 InterruptIn vp_interrupt(VP_PIN);
-int mode = RANDOM;
+
+enum Heartmode { RANDOM, MANUAL, TEST };
+Heartmode heart_mode = RANDOM;
+
 bool mode_switch_input = false;
+bool manual_signal_input = false;
+char user_input = '~';
 char last_keyboard = ' ';
 Thread * led_addr;
 Thread * display_addr;
+Keyboard * keyboard;
+
+int observation_interval = 0;
 
 void a_pace() {
     led_addr->signal_set(AP);
@@ -50,50 +55,88 @@ void v_pace() {
     display_addr->signal_set(VP);
 }
 
-void input_thread(void const * args) {
-    while (true) {
-        char c = pc.getc();
-        last_keyboard = c;
+void set_observation_interval() {
+    int i = 1;
+    observation_interval = 0;
+    while (keyboard->command[i] != '~') {
+        observation_interval = observation_interval * 10 + (keyboard->command[i] - '0');
+        i ++;
+    }
+}
+
+void interpret_command() {
+    if(keyboard->command[0] == 'o') {
+        set_observation_interval();
+        pc.printf("\n\rObservation interval set to: %d", observation_interval);
+    } else if (Keyboard::my_strequal(keyboard->command,"help",4)) {
+        pc.printf("THIS IS HELP");
+    } else {
+        user_input = keyboard->command[0];
         mode_switch_input = true;
+        manual_signal_input = true;
+    }
+}
+
+void input_thread(void const * args) {
+    keyboard->prompt();
+    keyboard->reset_command();
+    while(1) {
+        keyboard->last_keyboard = pc.getc();
+        keyboard->read_char(keyboard->last_keyboard);
+        
+        if (keyboard->last_keyboard != '\r') {
+            pc.putc(keyboard->last_keyboard);
+        }
+        
+        if (keyboard->last_keyboard == '\r' || keyboard->command_complete()) {
+            interpret_command();
+            keyboard->reset_command();
+            keyboard->prompt();
+        }
     }
 }
 
 void mode_switch_thread(void const * args) {
-    while (true) {
+    while(1) {
         if (mode_switch_input) {
-            // TODO process input
+            if (user_input == 'r' || user_input == 'R') {
+                heart_mode = RANDOM;
+            } else if (user_input == 'm' || user_input == 'M') {
+                heart_mode = MANUAL;
+            } else if (user_input == 't' || user_input == 'T') {
+                heart_mode = TEST;
+            }
+            lcd.printf("Mode: %d, ",heart_mode);
             mode_switch_input = false;
-        }
-        Thread::wait(300);
+        }    
     }
-        
 }
 
 void wait_v() {
-	while (true) {
-		osEvent sig = Thread::signal_wait(0x00);
-		int signum = sig.value.signals;
-		if (signum & AP) break;
-	}
-	while (true) {
-		osEvent sig = Thread::signal_wait(0x00);
-		int signum = sig.value.signals;
-		if (signum & VP) break;
-	}
+    while (true) {
+        osEvent sig = Thread::signal_wait(0x00);
+        int signum = sig.value.signals;
+        if (signum & AP) break;
+    }
+    while (true) {
+        osEvent sig = Thread::signal_wait(0x00);
+        int signum = sig.value.signals;
+        if (signum & VP) break;
+    }
 }
 
 
 void heart_thread(void const * args) {
     while (true) {
-        if (mode == RANDOM) {
+        if (heart_mode == RANDOM) {
             int target;
             int next = rand() % 2000;
             osEvent sig = Thread::signal_wait(0x00, next);
             int signum = sig.value.signals;
             if (signum & TO_MANUAL) {
-                mode = MANUAL;
+                heart_mode = MANUAL;
             } else if (signum & TO_TEST) {
-                mode = TEST;
+                heart_mode = TEST;
             } else {
                 target = rand() % 2;
                 if (target) {
@@ -106,13 +149,13 @@ void heart_thread(void const * args) {
                     vs_out = 1;
                     Thread::wait(20);
                     vs_out = 0;
-					display_addr->signal_set(VS);
+                    display_addr->signal_set(VS);
                 }
-				led_addr->signal_set(target);
+                led_addr->signal_set(target);
             }
-        } else if (mode == MANUAL) {
+        } else if (heart_mode == MANUAL) {
             
-        } else if (mode == TEST) {
+        } else if (heart_mode == TEST) {
             
         }
     }
@@ -156,7 +199,7 @@ void display_thread(void const * args) {
             count++;
         } else {
             double bpm = (double) count * 60000.0 / (double) interval;
-			lcd.locate(0,0);
+            lcd.locate(0,0);
             lcd.printf("%f BPM", bpm);
             count = 0;
             t.reset();
@@ -165,6 +208,8 @@ void display_thread(void const * args) {
 }
 
 int main() {
+    // Initialize keyboard
+    keyboard = new Keyboard(&pc);
     // Assign interrupts
     ap_interrupt.rise(&a_pace);
     vp_interrupt.rise(&v_pace);
@@ -172,7 +217,7 @@ int main() {
     Thread leds(led_thread);
     led_addr = &leds;
     Thread display(display_thread);
-	display_addr = &display;
+    display_addr = &display;
     Thread keyboard(input_thread);
     Thread mode_switch(mode_switch_thread);
     Thread heart(heart_thread);
