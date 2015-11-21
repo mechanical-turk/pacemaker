@@ -1,0 +1,141 @@
+#include "mbed.h"
+#include "TextLCD.h"
+#include "rtos.h"
+#include <stdlib.h>
+
+// Define the LCD output for this code
+TextLCD lcd(p15, p16, p17, p18, p19, p20, TextLCD::LCD16x2);
+// Keyboard Input
+Serial pc(USBTX, USBRX);
+
+DigitalOut ap_led(LED1);
+DigitalOut as_led(LED2);
+DigitalOut vp_led(LED3);
+DigitalOut vs_led(LED4);
+
+enum Heartmode { RANDOM, MANUAL, TEST };
+Heartmode heart_mode = RANDOM;
+
+bool mode_switch_input = false;
+bool manual_signal_input = false;
+
+char command[20];
+int command_index;
+char last_keyboard = '~';
+char user_input = '~';
+
+int observation_interval = 0;
+
+void timer0_init(void)
+{
+    LPC_SC->PCONP |= 1<1;           //timer0 power on
+    LPC_TIM0->MR0 = 239800;         //10 msec interrupt, based on clock rate
+    LPC_TIM0->MCR = 3;              //interrupt and reset control
+    NVIC_EnableIRQ(TIMER0_IRQn);    //enable timer0 interrupt
+    LPC_TIM0->TCR = 1;              //enable Timer0
+}
+
+void prompt() {
+    pc.puts("\n\r$ ");
+}
+
+void reset_command() {
+    for (int i = 0; i < 20; i++) {
+        command[i] = '~';
+    }
+    command_index = 0;
+}
+
+void read_char(char c) {
+    if (command_index < 20) {
+        command[command_index] = c;
+        command_index ++;
+    }
+}
+
+void set_observation_interval() {
+    int i = 1;
+    observation_interval = 0;
+    while (command[i] != '~') {
+        observation_interval = observation_interval * 10 + (command[i] - '0');
+        i ++;
+    }
+}
+
+bool my_strequal(char *c1, char *c2, int buffer_size) {
+    for (int i = 0; i < buffer_size; i++) {
+        if (c1[i] != c2[i]) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+void interpret_command() {
+    if(command[0] == 'o') {
+        set_observation_interval();
+        pc.printf("\n\rObservation interval set to: %d", observation_interval);
+    } else if (my_strequal(command,"help",4)) {
+        pc.printf("THIS IS HELP");
+    } else {
+        user_input = command[0];
+        mode_switch_input = true;
+        manual_signal_input = true;
+    }
+}
+
+void keyboard_thread(void const * args) {
+    prompt();
+    reset_command();
+    while(1) {
+        last_keyboard = pc.getc();
+        if (last_keyboard == '\r') {
+            interpret_command();
+            reset_command();
+            prompt();
+        } else {
+            read_char(last_keyboard);
+            pc.putc(last_keyboard);
+        }
+    }
+}
+
+void mode_switch_thread(void const * args) {
+    while(1) {
+        if (mode_switch_input) {
+            if (user_input == 'r' || user_input == 'R') {
+                heart_mode = RANDOM;
+            } else if (user_input == 'm' || user_input == 'M') {
+                heart_mode = MANUAL;
+            } else if (user_input == 't' || user_input == 'T') {
+                heart_mode = TEST;
+            }
+            lcd.printf("Mode: %d, ",heart_mode);
+            mode_switch_input = false;
+        }    
+    }
+}
+
+void manual_signal_thread(void const * args) {
+    while (1) {
+        if (manual_signal_input && heart_mode == MANUAL) {
+            if (user_input == 'a' || user_input == 'A') {
+                lcd.printf("ASENSE");
+                //TODO -  generate Asense signal
+            } else if (user_input == 'v' || user_input == 'V') {
+                lcd.printf("VSENSE");
+                //TODO -  generate Vsense signal
+            }
+            manual_signal_input = false;
+        }    
+    }    
+}
+
+int main() {
+    Thread keyboard(keyboard_thread);
+    Thread manual_signal(manual_signal_thread);
+    Thread mode_switch(mode_switch_thread);
+    
+    while(1) {}
+}
