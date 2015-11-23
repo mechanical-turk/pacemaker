@@ -165,6 +165,7 @@ void pace_thread(void const * args) {
 			} else {
 				next = LRI[pace_mode] - AVI_min - cV.read_ms();
 			}
+			next = max(next, 1);
 			osEvent sig = Thread::signal_wait(0x00, next);
 			int signum = sig.value.signals;
 			if (signum & TO_MANUAL) {

@@ -102,11 +102,11 @@ void mode_switch_thread(void const * args) {
     while(1) {
         if (mode_switch_input) {
             if (user_input == 'r' || user_input == 'R') {
-				heart_addr.signal_set(TO_RANDOM);
+				heart_addr->signal_set(TO_RANDOM);
             } else if (user_input == 'm' || user_input == 'M') {
-				heart_addr.signal_set(TO_MANUAL);
+				heart_addr->signal_set(TO_MANUAL);
             } else if (user_input == 't' || user_input == 'T') {
-				heart_addr.signal_set(TO_TEST);
+				heart_addr->signal_set(TO_TEST);
             }
             lcd.printf("Mode: %d, ",heart_mode);
             mode_switch_input = false;
