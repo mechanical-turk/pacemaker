@@ -1,13 +1,20 @@
 #include "mbed.h"
 #include "TextLCD.h"
 #include "rtos.h"
-#include "keyboard.cpp"
+#include "keyboard.h"
 #include <stdlib.h>
+#include <algorithm>
 
 #define AP 0x01
 #define AS 0x02
 #define VP 0x04
 #define VS 0x08
+#define TO_NORMAL 0x0010
+#define TO_EXERCISE 0x0020
+#define TO_SLEEP 0x0040
+#define TO_MANUAL 0x0080
+#define MANUAL_AP 0x0100
+#define MANUAL_VP 0x0200
 
 #define AVI_max 100
 #define AVI_min 30
@@ -81,7 +88,7 @@ void interpret_command() {
     } else {
         user_input = keyboard->command[0];
         mode_switch_input = true;
-        manual_signal_input = true;
+        if (pace_mode == MANUAL) manual_signal_input = true;
     }
 }
 
@@ -123,30 +130,72 @@ void mode_switch_thread(void const * args) {
 }
 
 void pace_thread(void const * args) {
-    bool state = 1;
-    while (true) {
-        if (state) {
-            if (cV.read_ms() > LRI[pace_mode] - AVI_min) {
-                led_addr->signal_set(AP);
-                ap_out = 1;
-                cA.reset();
-                Thread::wait(20);
-                ap_out = 0;
-                state = 0;
-            }
-        } else {
-            if (cV.read_ms() > LRI[pace_mode] || cA.read_ms() > AVI_max) {
-                led_addr->signal_set(VP);
-                display_addr->signal_set(VP);
+    bool vnext = 0;
+	while (true) {
+		if (pace_mode == MANUAL) {
+			osEvent sig = Thread::signal_wait(0x00);
+			int signum = sig.value.signals;
+			if (signum & TO_EXERCISE) {
+				pace_mode = EXERCISE;
+			} else if (signum & TO_SLEEP) {
+				pace_mode = SLEEP;
+			} else if (signum & TO_NORMAL) {
+				pace_mode = NORMAL;
+			} else if (signum & MANUAL_VP) {
+				led_addr->signal_set(VP);
+				display_addr->signal_set(VP);
 				alarm_addr->signal_set(VP);
-                vp_out = 1;
-                cV.reset();
-                Thread::wait(20);
-                vp_out = 0;
-                state = 1;
-            }
-        }
-    }
+				vp_out = 1;
+				cV.reset();
+				Thread::wait(20);
+				vp_out = 0;
+				vnext = false;
+			} else if (signum & MANUAL_AP) {
+				led_addr->signal_set(AP);
+				ap_out = 1;
+				cA.reset();
+				Thread::wait(20);
+				ap_out = 0;
+				vnext = true;
+			}
+		} else {
+			int next;
+			if (vnext) {
+				next = std::min(LRI[pace_mode]-cV.read_ms(), AVI_max-cA.read_ms());
+			} else {
+				next = LRI[pace_mode] - AVI_min - cV.read_ms();
+			}
+			osEvent sig = Thread::signal_wait(0x00, next);
+			int signum = sig.value.signals;
+			if (signum & TO_MANUAL) {
+				pace_mode = MANUAL;
+			} else if (signum & TO_EXERCISE) {
+				pace_mode = EXERCISE;
+			} else if (signum & TO_SLEEP) {
+				pace_mode = SLEEP;
+			} else if (signum & TO_NORMAL) {
+				pace_mode = NORMAL;
+			} else {
+				if (vnext) {
+					led_addr->signal_set(VP);
+					display_addr->signal_set(VP);
+					alarm_addr->signal_set(VP);
+					vp_out = 1;
+					cV.reset();
+					Thread::wait(20);
+					vp_out = 0;
+					vnext = false;
+				} else {
+					led_addr->signal_set(AP);
+					ap_out = 1;
+					cA.reset();
+					Thread::wait(20);
+					ap_out = 0;
+					vnext = true;
+				}
+			}
+		}
+	}
 }
 
 void led_thread(void const * args) {

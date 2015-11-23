@@ -38,7 +38,8 @@ bool Keyboard::command_complete() {
         (!
             (command[0] == 'o' || 
             command[0] == 'O' ||
-            command[0] == 'h'
+            command[0] == 'h' ||
+			command[0] == 'H'
             )
         )
     );

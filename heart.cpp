@@ -1,7 +1,7 @@
 #include "mbed.h"
 #include "TextLCD.h"
 #include "rtos.h"
-#include "keyboard.cpp"
+#include "keyboard.h"
 #include <stdlib.h>
 
 #define AP          0x0001
@@ -43,6 +43,7 @@ char last_keyboard = ' ';
 
 Thread * led_addr;
 Thread * display_addr;
+Thread * heart_addr;
 Keyboard * keyboard;
 
 int observation_interval = 0;
@@ -101,11 +102,11 @@ void mode_switch_thread(void const * args) {
     while(1) {
         if (mode_switch_input) {
             if (user_input == 'r' || user_input == 'R') {
-                heart_mode = RANDOM;
+				heart_addr.signal_set(TO_RANDOM);
             } else if (user_input == 'm' || user_input == 'M') {
-                heart_mode = MANUAL;
+				heart_addr.signal_set(TO_MANUAL);
             } else if (user_input == 't' || user_input == 'T') {
-                heart_mode = TEST;
+				heart_addr.signal_set(TO_TEST);
             }
             lcd.printf("Mode: %d, ",heart_mode);
             mode_switch_input = false;
@@ -222,6 +223,7 @@ int main() {
     Thread keyboard(input_thread);
     Thread mode_switch(mode_switch_thread);
     Thread heart(heart_thread);
+	heart_addr = &heart;
     
     while (1) { }
 }
