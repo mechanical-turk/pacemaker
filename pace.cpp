@@ -58,6 +58,7 @@ Timer cV;
 Thread * led_addr;
 Thread * display_addr;
 Thread * alarm_addr;
+Thread * pace_addr;
 
 int observation_interval = 0;
 
@@ -88,7 +89,11 @@ void interpret_command() {
     } else {
         user_input = keyboard->command[0];
         mode_switch_input = true;
-        if (pace_mode == MANUAL) manual_signal_input = true;
+        if (pace_mode == MANUAL && user_input == 'v') {
+			pace_addr->signal_set(MANUAL_VP);
+		} else if (pace_mode == MANUAL && user_input == 'a') {
+			pace_addr->signal_set(MANUAL_AP);
+		}
     }
 }
 
@@ -115,15 +120,14 @@ void mode_switch_thread(void const * args) {
     while(1) {
         if (mode_switch_input) {
             if (user_input == 'n' || user_input == 'N') {
-                pace_mode = NORMAL;
+				pace_addr->signal_set(TO_NORMAL);
             } else if (user_input == 'e' || user_input == 'E') {
-                pace_mode = EXERCISE;
+				pace_addr->signal_set(TO_EXERCISE);
             } else if (user_input == 's' || user_input == 'S') {
-                pace_mode = SLEEP;
+				pace_addr->signal_set(TO_SLEEP);
             } else if (user_input == 'm' || user_input == 'M') {
-                pace_mode = MANUAL;
+				pace_addr->signal_set(TO_MANUAL);
             }
-            lcd.printf("Mode: %d, ",pace_mode);
             mode_switch_input = false;
         }    
     }
@@ -301,6 +305,7 @@ int main() {
     Thread keyboard(input_thread);
     Thread mode_switch(mode_switch_thread);
     Thread pace(pace_thread);
+	pace_addr = &pace;
     
     while (1) { }
 }
