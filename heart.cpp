@@ -75,7 +75,11 @@ void interpret_command() {
     } else {
         user_input = keyboard->command[0];
         mode_switch_input = true;
-        manual_signal_input = true;
+		if (heart_mode == MANUAL && user_input == 'v') {
+			heart_addr->signal_set(MANUAL_VP);
+		} else if (heart_mode == MANUAL && user_input == 'a') {
+			heart_addr->signal_set(MANUAL_AP);
+		}
     }
 }
 
@@ -156,7 +160,24 @@ void heart_thread(void const * args) {
                 led_addr->signal_set(target);
             }
         } else if (heart_mode == MANUAL) {
-            
+            osEvent sig = Thread::signal_wait(0x00);
+            int signum = sig.value.signals;
+            if (signum & TO_RANDOM) {
+                heart_mode = RANDOM;
+            } else if (signum & TO_TEST) {
+				heart_mode = TEST;
+			} else if (signum & MANUAL_VP) {
+				vs_out = 1;
+				Thread::wait(20);
+				vs_out = 0;
+				display_addr->signal_set(VS);
+				led_addr->signal_set(VP);
+			} else if (signum & MANUAL_AP) {
+				as_out = 1;
+				Thread::wait(20);
+				as_out = 0;
+				led_addr->signal_set(AP);
+			}
         } else if (heart_mode == TEST) {
             
         }

@@ -64,12 +64,14 @@ int observation_interval = 0;
 
 void a_sense() {
     led_addr->signal_set(AS);
+    if (pace_mode != MANUAL) pace_addr->signal_set(AS);
 }
 
 void v_sense() {
     led_addr->signal_set(VS);
     display_addr->signal_set(VS);
-	alarm_addr->signal_set(VS);
+    alarm_addr->signal_set(VS);
+    if (pace_mode != MANUAL) pace_addr->signal_set(VS);
 }
 void set_observation_interval() {
     int i = 1;
@@ -90,10 +92,10 @@ void interpret_command() {
         user_input = keyboard->command[0];
         mode_switch_input = true;
         if (pace_mode == MANUAL && user_input == 'v') {
-			pace_addr->signal_set(MANUAL_VP);
-		} else if (pace_mode == MANUAL && user_input == 'a') {
-			pace_addr->signal_set(MANUAL_AP);
-		}
+            pace_addr->signal_set(MANUAL_VP);
+        } else if (pace_mode == MANUAL && user_input == 'a') {
+            pace_addr->signal_set(MANUAL_AP);
+        }
     }
 }
 
@@ -120,13 +122,13 @@ void mode_switch_thread(void const * args) {
     while(1) {
         if (mode_switch_input) {
             if (user_input == 'n' || user_input == 'N') {
-				pace_addr->signal_set(TO_NORMAL);
+                pace_addr->signal_set(TO_NORMAL);
             } else if (user_input == 'e' || user_input == 'E') {
-				pace_addr->signal_set(TO_EXERCISE);
+                pace_addr->signal_set(TO_EXERCISE);
             } else if (user_input == 's' || user_input == 'S') {
-				pace_addr->signal_set(TO_SLEEP);
+                pace_addr->signal_set(TO_SLEEP);
             } else if (user_input == 'm' || user_input == 'M') {
-				pace_addr->signal_set(TO_MANUAL);
+                pace_addr->signal_set(TO_MANUAL);
             }
             mode_switch_input = false;
         }    
@@ -135,72 +137,83 @@ void mode_switch_thread(void const * args) {
 
 void pace_thread(void const * args) {
     bool vnext = 0;
-	while (true) {
-		if (pace_mode == MANUAL) {
-			osEvent sig = Thread::signal_wait(0x00);
-			int signum = sig.value.signals;
-			if (signum & TO_EXERCISE) {
-				pace_mode = EXERCISE;
-			} else if (signum & TO_SLEEP) {
-				pace_mode = SLEEP;
-			} else if (signum & TO_NORMAL) {
-				pace_mode = NORMAL;
-			} else if (signum & MANUAL_VP) {
-				led_addr->signal_set(VP);
-				display_addr->signal_set(VP);
-				alarm_addr->signal_set(VP);
-				vp_out = 1;
-				cV.reset();
-				Thread::wait(20);
-				vp_out = 0;
-				vnext = false;
-			} else if (signum & MANUAL_AP) {
-				led_addr->signal_set(AP);
-				ap_out = 1;
-				cA.reset();
-				Thread::wait(20);
-				ap_out = 0;
-				vnext = true;
-			}
-		} else {
-			int next;
-			if (vnext) {
-				next = std::min(LRI[pace_mode]-cV.read_ms(), AVI_max-cA.read_ms());
-			} else {
-				next = LRI[pace_mode] - AVI_min - cV.read_ms();
-			}
-			next = max(next, 1);
-			osEvent sig = Thread::signal_wait(0x00, next);
-			int signum = sig.value.signals;
-			if (signum & TO_MANUAL) {
-				pace_mode = MANUAL;
-			} else if (signum & TO_EXERCISE) {
-				pace_mode = EXERCISE;
-			} else if (signum & TO_SLEEP) {
-				pace_mode = SLEEP;
-			} else if (signum & TO_NORMAL) {
-				pace_mode = NORMAL;
-			} else {
-				if (vnext) {
-					led_addr->signal_set(VP);
-					display_addr->signal_set(VP);
-					alarm_addr->signal_set(VP);
-					vp_out = 1;
-					cV.reset();
-					Thread::wait(20);
-					vp_out = 0;
-					vnext = false;
-				} else {
-					led_addr->signal_set(AP);
-					ap_out = 1;
-					cA.reset();
-					Thread::wait(20);
-					ap_out = 0;
-					vnext = true;
-				}
-			}
-		}
-	}
+    while (true) {
+        if (pace_mode == MANUAL) {
+            osEvent sig = Thread::signal_wait(0x00);
+            int signum = sig.value.signals;
+            if (signum & TO_EXERCISE) {
+                pace_mode = EXERCISE;
+            } else if (signum & TO_SLEEP) {
+                pace_mode = SLEEP;
+            } else if (signum & TO_NORMAL) {
+                pace_mode = NORMAL;
+            } else if (signum & MANUAL_VP) {
+                led_addr->signal_set(VP);
+                display_addr->signal_set(VP);
+                alarm_addr->signal_set(VP);
+                vp_out = 1;
+                cV.reset();
+                Thread::wait(20);
+                vp_out = 0;
+                vnext = false;
+            } else if (signum & MANUAL_AP) {
+                led_addr->signal_set(AP);
+                ap_out = 1;
+                cA.reset();
+                Thread::wait(20);
+                ap_out = 0;
+                vnext = true;
+            }
+        } else {
+            int next;
+            if (vnext) {
+                next = std::min(LRI[pace_mode]-cV.read_ms(), AVI_max-cA.read_ms());
+            } else {
+                next = LRI[pace_mode] - AVI_min - cV.read_ms();
+            }
+            next = max(next, 1);
+            osEvent sig = Thread::signal_wait(0x00, next);
+            int signum = sig.value.signals;
+            if (signum & TO_MANUAL) {
+                pace_mode = MANUAL;
+            } else if (signum & TO_EXERCISE) {
+                pace_mode = EXERCISE;
+            } else if (signum & TO_SLEEP) {
+                pace_mode = SLEEP;
+            } else if (signum & TO_NORMAL) {
+                pace_mode = NORMAL;
+            } else if (signum & AS) {
+                if (!vnext && cV.read_ms() >= PVARP) {
+                    cA.reset();
+                    vnext = true;
+                }
+            } else if (signum & VS) {
+                if (vnext && (cV.read_ms() >= URI[pace_mode]) &&
+                    (cV.read_ms() >= VRP) && (cV.read_ms() >= AVI_min)) {
+                    cV.reset();
+                    vnext = false;
+                }
+            } else {
+                if (vnext) {
+                    led_addr->signal_set(VP);
+                    display_addr->signal_set(VP);
+                    alarm_addr->signal_set(VP);
+                    vp_out = 1;
+                    cV.reset();
+                    Thread::wait(20);
+                    vp_out = 0;
+                    vnext = false;
+                } else {
+                    led_addr->signal_set(AP);
+                    ap_out = 1;
+                    cA.reset();
+                    Thread::wait(20);
+                    ap_out = 0;
+                    vnext = true;
+                }
+            }
+        }
+    }
 }
 
 void led_thread(void const * args) {
@@ -241,7 +254,7 @@ void display_thread(void const * args) {
             count++;
         } else {
             double bpm = (double) count * 60000.0 / (double) interval;
-			lcd.locate(0,0);
+            lcd.locate(0,0);
             lcd.printf("%f BPM", bpm);
             count = 0;
             t.reset();
@@ -250,36 +263,36 @@ void display_thread(void const * args) {
 }
 
 void alarm_thread(void const * args) {
-	Timer t;
-	t.reset();
-	t.start();
-	bool first = true;
-	while (true) {
+    Timer t;
+    t.reset();
+    t.start();
+    bool first = true;
+    while (true) {
         osEvent sig = Thread::signal_wait(0x00, LRI[pace_mode] - t.read_ms());
         int signum = sig.value.signals;
         if ((signum & VP) || (signum & VS)) {
-			if (!first && t.read_ms() < URI[pace_mode]) {
-				lcd.locate(0, 1);
-				lcd.printf("ERR_FAST");
-				Thread::wait(5000);
-				lcd.locate(0, 1);
-				lcd.printf("        ");
-				t.reset();
-				first = true;
-			} else {
-				t.reset();
+            if (!first && t.read_ms() < URI[pace_mode]) {
+                lcd.locate(0, 1);
+                lcd.printf("ERR_FAST");
+                Thread::wait(5000);
+                lcd.locate(0, 1);
+                lcd.printf("        ");
+                t.reset();
+                first = true;
+            } else {
+                t.reset();
                 first = false;
-			}
-		} else {
-			lcd.locate(0, 1);
-			lcd.printf("ERR_SLOW");
-			Thread::wait(5000);
-			lcd.locate(0, 1);
-			lcd.printf("        ");
-			t.reset();
-			first = true;
-		}
-	}
+            }
+        } else {
+            lcd.locate(0, 1);
+            lcd.printf("ERR_SLOW");
+            Thread::wait(5000);
+            lcd.locate(0, 1);
+            lcd.printf("        ");
+            t.reset();
+            first = true;
+        }
+    }
 }
 
 int main() {
@@ -301,11 +314,11 @@ int main() {
     Thread display(display_thread);
     display_addr = &display;
     Thread alarm(alarm_thread);
-	alarm_addr = &alarm;
+    alarm_addr = &alarm;
     Thread keyboard(input_thread);
     Thread mode_switch(mode_switch_thread);
     Thread pace(pace_thread);
-	pace_addr = &pace;
+    pace_addr = &pace;
     
     while (1) { }
 }
