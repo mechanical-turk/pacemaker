@@ -14,6 +14,7 @@
 #define TO_TEST     0x0040
 #define MANUAL_AS   0x0080
 #define MANUAL_VS   0x0100
+#define QUIT		0x0200
 
 #define AVI_max 100
 #define AVI_min 30
@@ -127,7 +128,9 @@ void mode_switch_thread(void const * args) {
                 heart_addr->signal_set(TO_MANUAL);
             } else if (user_input == 't' || user_input == 'T') {
                 heart_addr->signal_set(TO_TEST);
-            }
+            } else if (user_input == 'q' || user_input == 'Q') {
+				log_addr->signal_set(QUIT);
+			}
             lcd.printf("Mode: %d, ",heart_mode);
             mode_switch_input = false;
         }    
@@ -367,18 +370,25 @@ void log_thread(void const * args) {
         osEvent sig = Thread::signal_wait(0x00);
         int signum = sig.value.signals;
         if (signum & AP) {
-            sprintf(buffer, "AP: %d", t.read_ms());
+            sprintf(buffer, "AP: cv - %d | ca - %d",
+				cV.read_ms(), cA.read_ms());
             Logger::log(buffer);
         } else if (signum & VP) {
-            sprintf(buffer, "VP: %d", t.read_ms());
+            sprintf(buffer, "VP: cv - %d | ca - %d",
+				cV.read_ms(), cA.read_ms());
             Logger::log(buffer);
         } else if (signum & AS) {
-            sprintf(buffer, "AS: %d", t.read_ms());
+            sprintf(buffer, "AS: cv - %d | ca - %d",
+				cV.read_ms(), cA.read_ms());
             Logger::log(buffer);
         } else if (signum & VS) {
-            sprintf(buffer, "VS: %d", t.read_ms());
+            sprintf(buffer, "VS: cv - %d | ca - %d",
+				cV.read_ms(), cA.read_ms());
             Logger::log(buffer);
-        }
+        } else if (signum & QUIT) {
+			Logger::close_log_file();
+			exit(1);
+		}
     }
 }
 
