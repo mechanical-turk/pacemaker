@@ -3,6 +3,7 @@
 #include "rtos.h"
 #include "keyboard.h"
 #include <stdlib.h>
+#include <algorithm>
 
 #define AP          0x0001
 #define AS          0x0002
@@ -13,6 +14,13 @@
 #define TO_TEST     0x0040
 #define MANUAL_AP   0x0080
 #define MANUAL_VP   0x0100
+
+#define AVI_max 100
+#define AVI_min 30
+#define PVARP 500
+#define VRP 500 
+#define LRI 2000
+#define URI 1000
 
 #define AP_PIN p5
 #define AS_PIN p6
@@ -46,15 +54,20 @@ Thread * display_addr;
 Thread * heart_addr;
 Keyboard * keyboard;
 
+Timer cA;
+Timer cV;
+
 int observation_interval = 0;
 
 void a_pace() {
     led_addr->signal_set(AP);
+    if (heart_mode == TEST) heart_addr->signal_set(AP);
 }
 
 void v_pace() {
     led_addr->signal_set(VP);
     display_addr->signal_set(VP);
+    if (heart_mode == TEST) heart_addr->signal_set(VP);
 }
 
 void set_observation_interval() {
@@ -75,11 +88,11 @@ void interpret_command() {
     } else {
         user_input = keyboard->command[0];
         mode_switch_input = true;
-		if (heart_mode == MANUAL && user_input == 'v') {
-			heart_addr->signal_set(MANUAL_VP);
-		} else if (heart_mode == MANUAL && user_input == 'a') {
-			heart_addr->signal_set(MANUAL_AP);
-		}
+        if (heart_mode == MANUAL && user_input == 'v') {
+            heart_addr->signal_set(MANUAL_VP);
+        } else if (heart_mode == MANUAL && user_input == 'a') {
+            heart_addr->signal_set(MANUAL_AP);
+        }
     }
 }
 
@@ -106,11 +119,11 @@ void mode_switch_thread(void const * args) {
     while(1) {
         if (mode_switch_input) {
             if (user_input == 'r' || user_input == 'R') {
-				heart_addr->signal_set(TO_RANDOM);
+                heart_addr->signal_set(TO_RANDOM);
             } else if (user_input == 'm' || user_input == 'M') {
-				heart_addr->signal_set(TO_MANUAL);
+                heart_addr->signal_set(TO_MANUAL);
             } else if (user_input == 't' || user_input == 'T') {
-				heart_addr->signal_set(TO_TEST);
+                heart_addr->signal_set(TO_TEST);
             }
             lcd.printf("Mode: %d, ",heart_mode);
             mode_switch_input = false;
@@ -131,6 +144,33 @@ void wait_v() {
     }
 }
 
+bool wait_assert(int signal, int timeout) {
+    osEvent sig;
+    int signum = 0;
+    sig = Thread::signal_wait(0x00, timeout);
+    signum = sig.value.signals;
+    return signum & signal;
+}
+void wait_for(int signal) {
+    osEvent sig;
+    int signum = 0;
+    while (signum != signal) {
+        sig = Thread::signal_wait(0x00);
+        signum = sig.value.signals;
+    }
+}
+
+void send_AS() {
+    as_out = 1;
+    Thread::wait(10);
+    as_out = 0;
+}
+
+void send_VS() {
+    vs_out = 1;
+    Thread::wait(10);
+    vs_out = 0;
+}
 
 void heart_thread(void const * args) {
     while (true) {
@@ -147,14 +187,10 @@ void heart_thread(void const * args) {
                 target = rand() % 2;
                 if (target) {
                     target = AS;
-                    as_out = 1;
-                    Thread::wait(20);
-                    as_out = 0;
+                    send_AS();
                 } else {
                     target = VS;
-                    vs_out = 1;
-                    Thread::wait(20);
-                    vs_out = 0;
+                    send_VS();
                     display_addr->signal_set(VS);
                 }
                 led_addr->signal_set(target);
@@ -165,21 +201,107 @@ void heart_thread(void const * args) {
             if (signum & TO_RANDOM) {
                 heart_mode = RANDOM;
             } else if (signum & TO_TEST) {
-				heart_mode = TEST;
-			} else if (signum & MANUAL_VP) {
-				vs_out = 1;
-				Thread::wait(20);
-				vs_out = 0;
-				display_addr->signal_set(VS);
-				led_addr->signal_set(VP);
-			} else if (signum & MANUAL_AP) {
-				as_out = 1;
-				Thread::wait(20);
-				as_out = 0;
-				led_addr->signal_set(AP);
-			}
+                heart_mode = TEST;
+            } else if (signum & MANUAL_VP) {
+                send_VS();
+                display_addr->signal_set(VS);
+                led_addr->signal_set(VP);
+            } else if (signum & MANUAL_AP) {
+                send_AS();
+                led_addr->signal_set(AP);
+            }
         } else if (heart_mode == TEST) {
-            
+            bool assert = true;
+            int interval = 100;
+            // Initialize test cases
+            cA.start();
+            cV.start();
+            // Test normal operation
+            wait_for(AP);
+            cA.reset();
+            wait_for(VP);
+            cV.reset();
+            assert = assert & wait_assert(0x0000,
+                PVARP - cV.read_ms());
+            send_AS();
+            cA.reset();
+            assert = assert & wait_assert(0x0000,
+                max(URI - cV.read_ms(), 
+                    max(VRP - cV.read_ms(),
+                        AVI_min - cA.read_ms())));
+            send_VS();
+            cV.reset();
+            assert = assert & wait_assert(0x0000,
+                LRI - AVI_max - cV.read_ms() - interval);
+            send_AS();
+            cA.reset();
+            assert = assert & wait_assert(0x0000,
+                min(LRI - cV.read_ms(),
+                    AVI_max - cA.read_ms()) - interval);
+            send_VS();
+            cV.reset();
+            if (!assert) lcd.printf("Test 1 failed!\n\n");
+            // Test VS exceeds time
+            wait_for(AP);
+            cA.reset();
+            wait_for(VP);
+            cV.reset();
+            assert = true;
+            assert = assert & wait_assert(0x0000,
+                PVARP - cV.read_ms());
+            send_AS();
+            cA.reset();
+            assert = assert & wait_assert(VP,
+                min(LRI - cV.read_ms(), AVI_max - cA.read_ms()));
+            cV.reset();
+            send_VS();
+            assert = assert & wait_assert(AP,
+                LRI - AVI_max - cV.read_ms());
+            cA.reset();
+            if (!assert) lcd.printf("Test 2 failed!\n\n");
+            // Test AS exceeds time
+            wait_for(AP);
+            cA.reset();
+            wait_for(VP);
+            cV.reset();
+            assert = true;
+            assert = assert & wait_assert(AP,
+                LRI - AVI_max - cV.read_ms());
+            cA.reset();
+            send_AS();
+            assert = assert & wait_assert(VP, 
+                min(LRI - cV.read_ms(),
+                    AVI_max - cA.read_ms()));
+            cV.reset();
+            if (!assert) lcd.printf("Test 3 failed!\n\n");
+            // Test AS too soon
+            wait_for(AP);
+            cA.reset();
+            wait_for(VP);
+            cV.reset();
+            assert = true;
+            send_AS();
+            assert = assert & wait_assert(AP,
+                AVI_max - LRI - cV.read_ms());
+            cA.reset();
+            if (!assert) lcd.printf("Test 4 failed!\n\n");
+            // Test VS too soon
+            wait_for(AP);
+            cA.reset();
+            wait_for(VP);
+            cV.reset();
+            assert = true;
+            assert = assert & wait_assert(0x0000,
+                PVARP - cV.read_ms());
+            send_AS();
+            cA.reset();
+            send_VS();
+            assert = assert & wait_assert(VP,
+                min(LRI - cV.read_ms(),
+                    AVI_max - cA.read_ms()));
+            if (!assert) lcd.printf("Test 5 failed!\n\n");
+            // Tests are complete
+            heart_mode = RANDOM;
         }
     }
 }
@@ -244,7 +366,7 @@ int main() {
     Thread keyboard(input_thread);
     Thread mode_switch(mode_switch_thread);
     Thread heart(heart_thread);
-	heart_addr = &heart;
+    heart_addr = &heart;
     
     while (1) { }
 }

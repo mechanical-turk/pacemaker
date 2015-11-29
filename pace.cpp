@@ -135,6 +135,18 @@ void mode_switch_thread(void const * args) {
     }
 }
 
+void send_AP() {
+	ap_out = 1;
+	Thread::wait(10);
+	ap_out = 0;
+}
+
+void send_VP() {
+	vp_out = 1;
+	Thread::wait(10);
+	vp_out = 0;
+}
+
 void pace_thread(void const * args) {
     bool vnext = 0;
     while (true) {
@@ -151,17 +163,13 @@ void pace_thread(void const * args) {
                 led_addr->signal_set(VP);
                 display_addr->signal_set(VP);
                 alarm_addr->signal_set(VP);
-                vp_out = 1;
                 cV.reset();
-                Thread::wait(20);
-                vp_out = 0;
+                send_VP();
                 vnext = false;
             } else if (signum & MANUAL_AP) {
                 led_addr->signal_set(AP);
-                ap_out = 1;
                 cA.reset();
-                Thread::wait(20);
-                ap_out = 0;
+                send_AP();
                 vnext = true;
             }
         } else {
@@ -198,17 +206,13 @@ void pace_thread(void const * args) {
                     led_addr->signal_set(VP);
                     display_addr->signal_set(VP);
                     alarm_addr->signal_set(VP);
-                    vp_out = 1;
                     cV.reset();
-                    Thread::wait(20);
-                    vp_out = 0;
+                    send_VP();
                     vnext = false;
                 } else {
                     led_addr->signal_set(AP);
-                    ap_out = 1;
                     cA.reset();
-                    Thread::wait(20);
-                    ap_out = 0;
+                    send_AP();
                     vnext = true;
                 }
             }
