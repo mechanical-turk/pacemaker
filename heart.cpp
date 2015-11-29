@@ -2,9 +2,9 @@
 #include "TextLCD.h"
 #include "rtos.h"
 #include "keyboard.h"
+#include "logger.h"
 #include <stdlib.h>
 #include <algorithm>
-
 #define AP          0x0001
 #define AS          0x0002
 #define VP          0x0004
@@ -12,8 +12,8 @@
 #define TO_RANDOM   0x0010
 #define TO_MANUAL   0x0020
 #define TO_TEST     0x0040
-#define MANUAL_AP   0x0080
-#define MANUAL_VP   0x0100
+#define MANUAL_AS   0x0080
+#define MANUAL_VS   0x0100
 
 #define AVI_max 100
 #define AVI_min 30
@@ -52,6 +52,7 @@ char last_keyboard = ' ';
 Thread * led_addr;
 Thread * display_addr;
 Thread * heart_addr;
+Thread * log_addr;
 Keyboard * keyboard;
 
 Timer cA;
@@ -61,12 +62,14 @@ int observation_interval = 0;
 
 void a_pace() {
     led_addr->signal_set(AP);
+    log_addr->signal_set(AP);
     if (heart_mode == TEST) heart_addr->signal_set(AP);
 }
 
 void v_pace() {
     led_addr->signal_set(VP);
     display_addr->signal_set(VP);
+    log_addr->signal_set(VP);
     if (heart_mode == TEST) heart_addr->signal_set(VP);
 }
 
@@ -89,9 +92,9 @@ void interpret_command() {
         user_input = keyboard->command[0];
         mode_switch_input = true;
         if (heart_mode == MANUAL && user_input == 'v') {
-            heart_addr->signal_set(MANUAL_VP);
+            heart_addr->signal_set(MANUAL_VS);
         } else if (heart_mode == MANUAL && user_input == 'a') {
-            heart_addr->signal_set(MANUAL_AP);
+            heart_addr->signal_set(MANUAL_AS);
         }
     }
 }
@@ -161,12 +164,14 @@ void wait_for(int signal) {
 }
 
 void send_AS() {
+    log_addr->signal_set(AS);
     as_out = 1;
     Thread::wait(10);
     as_out = 0;
 }
 
 void send_VS() {
+    log_addr->signal_set(VS);
     vs_out = 1;
     Thread::wait(10);
     vs_out = 0;
@@ -202,13 +207,13 @@ void heart_thread(void const * args) {
                 heart_mode = RANDOM;
             } else if (signum & TO_TEST) {
                 heart_mode = TEST;
-            } else if (signum & MANUAL_VP) {
+            } else if (signum & MANUAL_VS) {
                 send_VS();
                 display_addr->signal_set(VS);
-                led_addr->signal_set(VP);
-            } else if (signum & MANUAL_AP) {
+                led_addr->signal_set(VS);
+            } else if (signum & MANUAL_AS) {
                 send_AS();
-                led_addr->signal_set(AP);
+                led_addr->signal_set(AS);
             }
         } else if (heart_mode == TEST) {
             bool assert = true;
@@ -216,6 +221,7 @@ void heart_thread(void const * args) {
             // Initialize test cases
             cA.start();
             cV.start();
+            Logger::log("Test started");
             // Test normal operation
             wait_for(AP);
             cA.reset();
@@ -301,6 +307,7 @@ void heart_thread(void const * args) {
                     AVI_max - cA.read_ms()));
             if (!assert) lcd.printf("Test 5 failed!\n\n");
             // Tests are complete
+            Logger::log("Test finished");
             heart_mode = RANDOM;
         }
     }
@@ -352,7 +359,33 @@ void display_thread(void const * args) {
     }
 }
 
+void log_thread(void const * args) {
+    Timer t;
+    t.start();
+    char buffer[100];
+    while (true) {
+        osEvent sig = Thread::signal_wait(0x00);
+        int signum = sig.value.signals;
+        if (signum & AP) {
+            sprintf(buffer, "AP: %d", t.read_ms());
+            Logger::log(buffer);
+        } else if (signum & VP) {
+            sprintf(buffer, "VP: %d", t.read_ms());
+            Logger::log(buffer);
+        } else if (signum & AS) {
+            sprintf(buffer, "AS: %d", t.read_ms());
+            Logger::log(buffer);
+        } else if (signum & VS) {
+            sprintf(buffer, "VS: %d", t.read_ms());
+            Logger::log(buffer);
+        }
+    }
+}
+
 int main() {
+    Logger::create_log_file("LOG FILE");
+    Thread log(log_thread);
+    log_addr = &log;
     // Initialize keyboard
     keyboard = new Keyboard(&pc);
     // Assign interrupts
