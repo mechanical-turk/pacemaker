@@ -1,3 +1,4 @@
 Logger::create_log_file("Logfile initialized");
 Logger::log("test 1");
 Logger::log("test 2");
+Logger::close_log_file();
