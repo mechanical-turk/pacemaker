@@ -15,6 +15,8 @@
 #define TO_TEST     0x0040
 #define MANUAL_AS   0x0080
 #define MANUAL_VS   0x0100
+#define INPUT_READY 0x0200
+#define INTERVAL_CHANGE 0x0400
 
 #define AVI_max 100
 #define AVI_min 30
@@ -54,43 +56,53 @@ Thread * led_addr;
 Thread * display_addr;
 Thread * heart_addr;
 Thread * log_addr;
+Thread * keyboard_addr;
 Keyboard * keyboard;
 
 Timer cA;
 Timer cV;
+Timer t_global;
 
 bool running = true;
 
-int observation_interval = 0;
+int observation_interval = 10000;
 
 void a_pace() {
     led_addr->signal_set(AP);
     log_addr->signal_set(AP);
-    if (heart_mode == TEST) heart_addr->signal_set(AP);
+    if (heart_mode == TEST) {
+        heart_addr->signal_set(AP);
+    }
 }
 
 void v_pace() {
     led_addr->signal_set(VP);
     display_addr->signal_set(VP);
     log_addr->signal_set(VP);
-    if (heart_mode == TEST) heart_addr->signal_set(VP);
+    if (heart_mode == TEST) {
+        heart_addr->signal_set(VP);
+    }
 }
 
 void set_observation_interval() {
     int i = 1;
-    observation_interval = 0;
+    int interval = 0;
     while (keyboard->command[i] != '~') {
-        observation_interval = observation_interval * 10 + (keyboard->command[i] - '0');
+        interval = interval * 10 + (keyboard->command[i] - '0');
         i ++;
     }
+    observation_interval = interval;
+    display_addr->signal_set(INTERVAL_CHANGE);
 }
 
 void interpret_command() {
     if(keyboard->command[0] == 'o') {
         set_observation_interval();
         pc.printf("\n\rObservation interval set to: %d", observation_interval);
+        keyboard_addr->signal_set(INPUT_READY);
     } else if (Keyboard::my_strequal(keyboard->command,"help",4)) {
         pc.printf("THIS IS HELP");
+        keyboard_addr->signal_set(INPUT_READY);
     } else {
         user_input = keyboard->command[0];
         mode_switch_input = true;
@@ -116,6 +128,7 @@ void input_thread(void const * args) {
         if (keyboard->last_keyboard == '\r' || keyboard->command_complete()) {
             interpret_command();
             keyboard->reset_command();
+            Thread::signal_wait(0x00);
             keyboard->prompt();
         }
     }
@@ -124,6 +137,9 @@ void input_thread(void const * args) {
 void mode_switch_thread(void const * args) {
     while(1) {
         if (mode_switch_input) {
+            if (user_input != 't' && user_input != 'T') {
+                keyboard_addr->signal_set(INPUT_READY);
+            }
             if (user_input == 'r' || user_input == 'R') {
                 heart_addr->signal_set(TO_RANDOM);
             } else if (user_input == 'm' || user_input == 'M') {
@@ -131,9 +147,9 @@ void mode_switch_thread(void const * args) {
             } else if (user_input == 't' || user_input == 'T') {
                 heart_addr->signal_set(TO_TEST);
             } else if (user_input == 'q' || user_input == 'Q') {
-				running = false;
-				Logger::close_log_file();\
-			}
+                running = false;
+                Logger::close_log_file();\
+            }
             mode_switch_input = false;
         }    
     }
@@ -173,7 +189,7 @@ void send_AS() {
     log_addr->signal_set(AS);
     led_addr->signal_set(AS);
     as_out = 1;
-    Thread::wait(10);
+    Thread::wait(5);
     as_out = 0;
 }
 
@@ -181,18 +197,18 @@ void send_VS() {
     log_addr->signal_set(VS);
     led_addr->signal_set(VS);
     vs_out = 1;
-    Thread::wait(10);
+    Thread::wait(5);
     vs_out = 0;
 }
 
 void report(bool assert) {
-	if (!assert) {
-		Logger::log("Test failed!");
-		pc.printf("\n\rTest failed!\n\r");
-	} else {
-		Logger::log("Test passed!");
-		pc.printf("\n\rTest passed!\n\r");
-	}
+    if (!assert) {
+        Logger::log("Test failed!");
+        pc.printf("\n\rTest failed!\n\r");
+    } else {
+        Logger::log("Test passed!");
+        pc.printf("\n\rTest passed!\n\r");
+    }
 }
 
 void heart_thread(void const * args) {
@@ -229,14 +245,13 @@ void heart_thread(void const * args) {
             }
         } else if (heart_mode == TEST) {
             bool assert = true;
-            int interval = 10;
+            int interval = 15;
             // Initialize test cases
             cA.start();
             cV.start();
             Logger::log("Test started");
-			pc.printf("\n\rTest started!\n\r");
-			keyboard->prompt();
-			
+            pc.printf("\n\rTest started!\n\r");
+            
             // Test normal operation
             wait_for(AP);
             cA.reset();
@@ -244,7 +259,7 @@ void heart_thread(void const * args) {
             cV.reset();
             assert = assert & wait_assert(0x0000,
                 max(PVARP - cV.read_ms(),
-					URI - AVI_max - cV.read_ms()));
+                    URI - AVI_max - cV.read_ms()));
             send_AS();
             cA.reset();
             assert = assert & wait_assert(0x0000,
@@ -282,8 +297,8 @@ void heart_thread(void const * args) {
             cA.reset();
             report(assert);
             // Test AS exceeds time
-			wait_for(VP);
-			cV.reset();
+            wait_for(VP);
+            cV.reset();
             wait_for(AP);
             cA.reset();
             wait_for(VP);
@@ -310,8 +325,8 @@ void heart_thread(void const * args) {
             cA.reset();
             report(assert);
             // Test VS too soon
-			wait_for(VP);
-			cV.reset();
+            wait_for(VP);
+            cV.reset();
             wait_for(AP);
             cA.reset();
             wait_for(VP);
@@ -328,11 +343,12 @@ void heart_thread(void const * args) {
             report(assert);
             // Tests are complete
             Logger::log("Test finished");
-			cA.stop();
-			cV.stop();
-			cA.reset();
-			cV.reset();
-			pc.puts("Tests complete!\n");
+            cA.stop();
+            cV.stop();
+            cA.reset();
+            cV.reset();
+            pc.puts("Tests complete!\n");
+            keyboard_addr->signal_set(INPUT_READY);
             heart_mode = RANDOM;
         }
     }
@@ -364,18 +380,22 @@ void led_thread(void const * args) {
 
 void display_thread(void const * args) {
     Timer t;
-    int interval = 10000;
     int count = 0;
     lcd.printf("Initialized\n\n");
     t.reset();
     t.start();
     while (true) {
-        osEvent sig = Thread::signal_wait(0x00, interval - t.read_ms());
+        osEvent sig = Thread::signal_wait(0x00, max(observation_interval - t.read_ms(), 1));
         int signum = sig.value.signals;
         if ((signum & VP) || (signum & VS)) {
             count++;
+        } else if (signum & INTERVAL_CHANGE) {
+            t.reset();
+            count = 0;
+            lcd.locate(0,0);
+            lcd.printf("Initialized\n\n");
         } else {
-            double bpm = (double) count * 60000.0 / (double) interval;
+            double bpm = (double) count * 60000.0 / (double) observation_interval;
             lcd.locate(0,0);
             lcd.printf("%f BPM", bpm);
             count = 0;
@@ -385,33 +405,40 @@ void display_thread(void const * args) {
 }
 
 void log_thread(void const * args) {
-    Timer t;
-    t.start();
     char buffer[100];
     while (running) {
         osEvent sig = Thread::signal_wait(0x00);
         int signum = sig.value.signals;
         if (signum & AP) {
+            if (heart_mode == TEST)
+                pc.printf("\n\rAP: %d", t_global.read_ms());
             sprintf(buffer, "AP: cv - %d | ca - %d | t - %d",
-				cV.read_ms(), cA.read_ms(), t.read_ms());
+                cV.read_ms(), cA.read_ms(), t_global.read_ms());
             Logger::log(buffer);
         } else if (signum & VP) {
+            if (heart_mode == TEST)
+                pc.printf("\n\rVP: %d", t_global.read_ms());
             sprintf(buffer, "VP: cv - %d | ca - %d | t - %d",
-				cV.read_ms(), cA.read_ms(), t.read_ms());
+                cV.read_ms(), cA.read_ms(), t_global.read_ms());
             Logger::log(buffer);
         } else if (signum & AS) {
+            if (heart_mode == TEST)
+                pc.printf("\n\rAS: %d", t_global.read_ms());
             sprintf(buffer, "AS: cv - %d | ca - %d | t - %d",
-				cV.read_ms(), cA.read_ms(), t.read_ms());
+                cV.read_ms(), cA.read_ms(), t_global.read_ms());
             Logger::log(buffer);
         } else if (signum & VS) {
+            if (heart_mode == TEST)
+                pc.printf("\n\rVS: %d", t_global.read_ms());
             sprintf(buffer, "VS: cv - %d | ca - %d | t - %d",
-				cV.read_ms(), cA.read_ms(), t.read_ms());
+                cV.read_ms(), cA.read_ms(), t_global.read_ms());
             Logger::log(buffer);
         }
     }
 }
 
 int main() {
+    t_global.start();
     Logger::create_log_file("LOG FILE");
     Thread log(log_thread);
     log_addr = &log;
@@ -426,6 +453,7 @@ int main() {
     Thread display(display_thread);
     display_addr = &display;
     Thread keyboard(input_thread);
+    keyboard_addr = &keyboard;
     Thread mode_switch(mode_switch_thread);
     Thread heart(heart_thread);
     heart_addr = &heart;

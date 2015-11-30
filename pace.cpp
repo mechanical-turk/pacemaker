@@ -15,6 +15,7 @@
 #define TO_MANUAL	0x0080
 #define MANUAL_AP	0x0100
 #define MANUAL_VP	0x0200
+#define INTERVAL_CHANGE	0x0400
 
 #define AVI_max 100
 #define AVI_min 30
@@ -60,7 +61,7 @@ Thread * display_addr;
 Thread * alarm_addr;
 Thread * pace_addr;
 
-int observation_interval = 0;
+int observation_interval = 10000;
 
 void a_sense() {
     led_addr->signal_set(AS);
@@ -80,6 +81,7 @@ void set_observation_interval() {
         observation_interval = observation_interval * 10 + (keyboard->command[i] - '0');
         i ++;
     }
+	display_addr->signal_set(INTERVAL_CHANGE);
 }
 
 void interpret_command() {
@@ -137,13 +139,13 @@ void mode_switch_thread(void const * args) {
 
 void send_AP() {
 	ap_out = 1;
-	Thread::wait(10);
+	Thread::wait(5);
 	ap_out = 0;
 }
 
 void send_VP() {
 	vp_out = 1;
-	Thread::wait(10);
+	Thread::wait(5);
 	vp_out = 0;
 }
 
@@ -203,16 +205,16 @@ void pace_thread(void const * args) {
                 }
             } else {
                 if (vnext) {
+                    cV.reset();
+                    send_VP();
                     led_addr->signal_set(VP);
                     display_addr->signal_set(VP);
                     alarm_addr->signal_set(VP);
-                    cV.reset();
-                    send_VP();
                     vnext = false;
                 } else {
-                    led_addr->signal_set(AP);
                     cA.reset();
                     send_AP();
+                    led_addr->signal_set(AP);
                     vnext = true;
                 }
             }
@@ -246,18 +248,22 @@ void led_thread(void const * args) {
 
 void display_thread(void const * args) {
     Timer t;
-    int interval = 10000;
     int count = 0;
     lcd.printf("Initialized\n\n");
     t.reset();
     t.start();
     while (true) {
-        osEvent sig = Thread::signal_wait(0x00, interval - t.read_ms());
+        osEvent sig = Thread::signal_wait(0x00, observation_interval - t.read_ms());
         int signum = sig.value.signals;
         if ((signum & VP) || (signum & VS)) {
             count++;
-        } else {
-            double bpm = (double) count * 60000.0 / (double) interval;
+        } else if (signum & INTERVAL_CHANGE) {
+			t.reset();
+			count = 0;
+			lcd.locate(0,0);
+			lcd.printf("Initialized\n\n");
+		} else {
+            double bpm = (double) count * 60000.0 / (double) observation_interval;
             lcd.locate(0,0);
             lcd.printf("%f BPM", bpm);
             count = 0;
@@ -271,8 +277,9 @@ void alarm_thread(void const * args) {
     t.reset();
     t.start();
     bool first = true;
+	int interval = 15;
     while (true) {
-        osEvent sig = Thread::signal_wait(0x00, LRI[pace_mode] - t.read_ms());
+        osEvent sig = Thread::signal_wait(0x00, LRI[pace_mode] - t.read_ms() + interval);
         int signum = sig.value.signals;
         if ((signum & VP) || (signum & VS)) {
             if (!first && t.read_ms() < URI[pace_mode]) {
@@ -324,5 +331,5 @@ int main() {
     Thread pace(pace_thread);
     pace_addr = &pace;
     
-    while (1) { }
+    while (true) { }
 }
