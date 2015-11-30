@@ -5,6 +5,7 @@
 #include "logger.h"
 #include <stdlib.h>
 #include <algorithm>
+
 #define AP          0x0001
 #define AS          0x0002
 #define VP          0x0004
@@ -184,6 +185,16 @@ void send_VS() {
     vs_out = 0;
 }
 
+void report(bool assert) {
+	if (!assert) {
+		Logger::log("Test failed!");
+		pc.printf("\n\rTest failed!\n\r");
+	} else {
+		Logger::log("Test passed!");
+		pc.printf("\n\rTest passed!\n\r");
+	}
+}
+
 void heart_thread(void const * args) {
     while (true) {
         if (heart_mode == RANDOM) {
@@ -218,11 +229,14 @@ void heart_thread(void const * args) {
             }
         } else if (heart_mode == TEST) {
             bool assert = true;
-            int interval = 100;
+            int interval = 10;
             // Initialize test cases
             cA.start();
             cV.start();
             Logger::log("Test started");
+			pc.printf("\n\rTest started!\n\r");
+			keyboard->prompt();
+			
             // Test normal operation
             wait_for(AP);
             cA.reset();
@@ -248,8 +262,7 @@ void heart_thread(void const * args) {
                     AVI_max - cA.read_ms()) - interval);
             send_VS();
             cV.reset();
-            if (!assert) Logger::log("Test failed!");
-			else Logger::log("Test passed!");
+            report(assert);
             // Test VS exceeds time
             wait_for(AP);
             cA.reset();
@@ -258,20 +271,16 @@ void heart_thread(void const * args) {
             assert = true;
             assert = assert & wait_assert(0x0000,
                 PVARP - cV.read_ms());
-			if (!assert) Logger::log("Failed 1");
             send_AS();
             cA.reset();
             assert = assert & wait_assert(VP,
                 min(LRI - cV.read_ms(), AVI_max - cA.read_ms()) + interval);
-			if (!assert) Logger::log("Failed 2");
             cV.reset();
             send_VS();
             assert = assert & wait_assert(AP,
-                LRI - AVI_max - cV.read_ms() + interval);
-			if (!assert) Logger::log("Failed 3");
+                LRI - AVI_min - cV.read_ms() + interval);
             cA.reset();
-            if (!assert) Logger::log("Test failed!");
-			else Logger::log("Test passed!");
+            report(assert);
             // Test AS exceeds time
 			wait_for(VP);
 			cV.reset();
@@ -281,15 +290,14 @@ void heart_thread(void const * args) {
             cV.reset();
             assert = true;
             assert = assert & wait_assert(AP,
-                LRI - AVI_max - cV.read_ms() + interval);
+                LRI - AVI_min - cV.read_ms() + interval);
             cA.reset();
             send_AS();
             assert = assert & wait_assert(VP, 
                 min(LRI - cV.read_ms(),
                     AVI_max - cA.read_ms()) + interval);
             cV.reset();
-            if (!assert) Logger::log("Test failed!");
-			else Logger::log("Test passed!");
+            report(assert);
             // Test AS too soon
             wait_for(AP);
             cA.reset();
@@ -300,8 +308,7 @@ void heart_thread(void const * args) {
             assert = assert & wait_assert(AP,
                 AVI_max - LRI - cV.read_ms());
             cA.reset();
-            if (!assert) Logger::log("Test failed!");
-			else Logger::log("Test passed!");
+            report(assert);
             // Test VS too soon
 			wait_for(VP);
 			cV.reset();
@@ -318,14 +325,14 @@ void heart_thread(void const * args) {
             assert = assert & wait_assert(VP,
                 min(LRI - cV.read_ms(),
                     AVI_max - cA.read_ms()) + interval);
-            if (!assert) Logger::log("Test failed!");
-			else Logger::log("Test passed!");
+            report(assert);
             // Tests are complete
             Logger::log("Test finished");
 			cA.stop();
 			cV.stop();
 			cA.reset();
 			cV.reset();
+			pc.puts("Tests complete!\n");
             heart_mode = RANDOM;
         }
     }

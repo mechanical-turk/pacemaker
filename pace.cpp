@@ -5,16 +5,16 @@
 #include <stdlib.h>
 #include <algorithm>
 
-#define AP 0x01
-#define AS 0x02
-#define VP 0x04
-#define VS 0x08
-#define TO_NORMAL 0x0010
-#define TO_EXERCISE 0x0020
-#define TO_SLEEP 0x0040
-#define TO_MANUAL 0x0080
-#define MANUAL_AP 0x0100
-#define MANUAL_VP 0x0200
+#define AP			0x01
+#define AS			0x02
+#define VP			0x04
+#define VS			0x08
+#define TO_NORMAL	0x0010
+#define TO_EXERCISE	0x0020
+#define TO_SLEEP	0x0040
+#define TO_MANUAL	0x0080
+#define MANUAL_AP	0x0100
+#define MANUAL_VP	0x0200
 
 #define AVI_max 100
 #define AVI_min 30
