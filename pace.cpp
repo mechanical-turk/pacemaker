@@ -16,11 +16,19 @@
 #define MANUAL_AP	0x0100
 #define MANUAL_VP	0x0200
 #define INTERVAL_CHANGE	0x0400
+#define TO_DYNAMIC	0x0800
 
 #define AVI_max 100
 #define AVI_min 30
 #define PVARP 500
 #define VRP 500 
+#define PVARP_EXTEND 50
+
+// Values taken from
+// https://www.bostonscientific.com/content/dam/bostonscientific/quality/education-resources/english/ACL_AVSH_20091130.pdf
+#define AV_INCREASE 1.3
+#define DYNAMIC_AV_MIN 80
+#define DYNAMIC_AV_MAX 150
 
 #define AP_PIN p5
 #define AS_PIN p6
@@ -62,6 +70,14 @@ Thread * alarm_addr;
 Thread * pace_addr;
 
 int observation_interval = 10000;
+
+// PVARP extension
+bool extend_PVARP = false;
+bool extend_last = false;
+
+// Dynamic AVI
+bool use_dynamic_AVI = false;
+int dynamic_AVI = AVI_max;
 
 void a_sense() {
     led_addr->signal_set(AS);
@@ -131,7 +147,11 @@ void mode_switch_thread(void const * args) {
                 pace_addr->signal_set(TO_SLEEP);
             } else if (user_input == 'm' || user_input == 'M') {
                 pace_addr->signal_set(TO_MANUAL);
-            }
+            } else if (user_input == 'x' || user_input == 'X') {
+				extend_PVARP = !extend_PVARP;
+			} else if (user_input == 'd' || user_input == 'D') {
+				pace_addr->signal_set(TO_DYNAMIC);
+			}
             mode_switch_input = false;
         }    
     }
@@ -177,7 +197,10 @@ void pace_thread(void const * args) {
         } else {
             int next;
             if (vnext) {
-                next = std::min(LRI[pace_mode]-cV.read_ms(), AVI_max-cA.read_ms());
+                next = std::min(LRI[pace_mode]-cV.read_ms(), 
+					use_dynamic_AVI ? 
+						dynamic_AVI-cA.read_ms() :
+						AVI_max-cA.read_ms());
             } else {
                 next = LRI[pace_mode] - AVI_min - cV.read_ms();
             }
@@ -192,19 +215,37 @@ void pace_thread(void const * args) {
                 pace_mode = SLEEP;
             } else if (signum & TO_NORMAL) {
                 pace_mode = NORMAL;
+			} else if (signum & TO_DYNAMIC) {
+				use_dynamic_AVI = !use_dynamic_AVI;
             } else if (signum & AS) {
-                if (!vnext && cV.read_ms() >= PVARP) {
+				// Modified for PVARP extension
+                if (!vnext &&
+					((!extend_last || !extend_PVARP) && cV.read_ms() >= PVARP) ||
+					(extend_last && extend_PVARP && cV.read_ms() >= PVARP + PVARP_EXTEND)) {
+					extend_last = false;
                     cA.reset();
                     vnext = true;
                 }
             } else if (signum & VS) {
-                if (vnext && (cV.read_ms() >= URI[pace_mode]) &&
-                    (cV.read_ms() >= VRP) && (cV.read_ms() >= AVI_min)) {
+				// Modified for PVARP extension
+                if ((vnext || (!vnext && extend_PVARP && !extend_last))
+					&& (cV.read_ms() >= URI[pace_mode]) &&
+                    (cV.read_ms() >= VRP) && (cA.read_ms() >= AVI_min)) {
+					if (!vnext) {
+						extend_last = true;
+					} else {
+						// Update dynamic AVI
+						dynamic_AVI = max(DYNAMIC_AV_MIN,
+							min(DYNAMIC_AV_MAX, (int) (AV_INCREASE * cA.read_ms())));
+					}
                     cV.reset();
                     vnext = false;
                 }
             } else {
                 if (vnext) {
+					// Update dynamic AVI
+					dynamic_AVI = max(DYNAMIC_AV_MIN,
+						min(DYNAMIC_AV_MAX, (int) (AV_INCREASE * cA.read_ms())));
                     cV.reset();
                     send_VP();
                     led_addr->signal_set(VP);
@@ -215,6 +256,7 @@ void pace_thread(void const * args) {
                     cA.reset();
                     send_AP();
                     led_addr->signal_set(AP);
+					extend_last = false;
                     vnext = true;
                 }
             }

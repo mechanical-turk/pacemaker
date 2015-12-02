@@ -17,6 +17,8 @@
 #define MANUAL_VS   0x0100
 #define INPUT_READY 0x0200
 #define INTERVAL_CHANGE 0x0400
+#define TO_DYNAMIC  0x0800
+#define TO_EXTENDED 0x1000
 
 #define AVI_max 100
 #define AVI_min 30
@@ -24,6 +26,12 @@
 #define VRP 500 
 #define LRI 2000
 #define URI 1000
+
+// Values taken from
+// https://www.bostonscientific.com/content/dam/bostonscientific/quality/education-resources/english/ACL_AVSH_20091130.pdf
+#define AV_INCREASE 1.3
+#define DYNAMIC_AV_MIN 80
+#define DYNAMIC_AV_MAX 150
 
 #define AP_PIN p5
 #define AS_PIN p6
@@ -44,7 +52,7 @@ DigitalOut vs_out(VS_PIN);
 InterruptIn ap_interrupt(AP_PIN);
 InterruptIn vp_interrupt(VP_PIN);
 
-enum Heartmode { RANDOM, MANUAL, TEST };
+enum Heartmode { RANDOM, MANUAL, TEST, DYNAMIC_TEST, EXTENDED_TEST };
 Heartmode heart_mode = RANDOM;
 
 bool mode_switch_input = false;
@@ -70,7 +78,7 @@ int observation_interval = 10000;
 void a_pace() {
     led_addr->signal_set(AP);
     log_addr->signal_set(AP);
-    if (heart_mode == TEST) {
+    if (heart_mode == TEST || heart_mode == DYNAMIC_TEST || heart_mode == EXTENDED_TEST) {
         heart_addr->signal_set(AP);
     }
 }
@@ -79,7 +87,7 @@ void v_pace() {
     led_addr->signal_set(VP);
     display_addr->signal_set(VP);
     log_addr->signal_set(VP);
-    if (heart_mode == TEST) {
+    if (heart_mode == TEST || heart_mode == DYNAMIC_TEST || heart_mode == EXTENDED_TEST) {
         heart_addr->signal_set(VP);
     }
 }
@@ -137,7 +145,9 @@ void input_thread(void const * args) {
 void mode_switch_thread(void const * args) {
     while(1) {
         if (mode_switch_input) {
-            if (user_input != 't' && user_input != 'T') {
+            if (user_input != 't' && user_input != 'T' &&
+                user_input != 'd' && user_input != 'D' &&
+                user_input != 'x' && user_input != 'X') {
                 keyboard_addr->signal_set(INPUT_READY);
             }
             if (user_input == 'r' || user_input == 'R') {
@@ -146,6 +156,10 @@ void mode_switch_thread(void const * args) {
                 heart_addr->signal_set(TO_MANUAL);
             } else if (user_input == 't' || user_input == 'T') {
                 heart_addr->signal_set(TO_TEST);
+            } else if (user_input == 'd' || user_input == 'D') {
+                heart_addr->signal_set(TO_DYNAMIC);
+            } else if (user_input == 'x' || user_input == 'X') {
+                heart_addr->signal_set(TO_EXTENDED);
             } else if (user_input == 'q' || user_input == 'Q') {
                 running = false;
                 Logger::close_log_file();\
@@ -171,7 +185,8 @@ void wait_v() {
 bool wait_assert(int signal, int timeout) {
     osEvent sig;
     int signum = 0;
-    sig = Thread::signal_wait(0x00, timeout);
+    if (timeout > 0) sig = Thread::signal_wait(0x00, timeout);
+	else sig = Thread::signal_wait(0x00);
     signum = sig.value.signals;
     return signum == signal;
 }
@@ -211,17 +226,26 @@ void report(bool assert) {
     }
 }
 
+int update_AVI(int ms) {
+    return max(DYNAMIC_AV_MIN,
+        min(DYNAMIC_AV_MAX, (int) (AV_INCREASE * ms)));
+}
+
 void heart_thread(void const * args) {
     while (true) {
         if (heart_mode == RANDOM) {
             int target;
-            int next = rand() % 2000;
+            int next = rand() % 3000;
             osEvent sig = Thread::signal_wait(0x00, next);
             int signum = sig.value.signals;
             if (signum & TO_MANUAL) {
                 heart_mode = MANUAL;
             } else if (signum & TO_TEST) {
                 heart_mode = TEST;
+            } else if (signum & TO_DYNAMIC) {
+                heart_mode = DYNAMIC_TEST;
+            } else if (signum & TO_EXTENDED) {
+                heart_mode = EXTENDED_TEST;
             } else {
                 target = rand() % 2;
                 if (target) {
@@ -238,6 +262,10 @@ void heart_thread(void const * args) {
                 heart_mode = RANDOM;
             } else if (signum & TO_TEST) {
                 heart_mode = TEST;
+            } else if (signum & TO_DYNAMIC) {
+                heart_mode = DYNAMIC_TEST;
+            } else if (signum & TO_EXTENDED) {
+                heart_mode = EXTENDED_TEST;
             } else if (signum & MANUAL_VS) {
                 send_VS();
             } else if (signum & MANUAL_AS) {
@@ -350,6 +378,176 @@ void heart_thread(void const * args) {
             pc.puts("Tests complete!\n");
             keyboard_addr->signal_set(INPUT_READY);
             heart_mode = RANDOM;
+        } else if (heart_mode == DYNAMIC_TEST) {
+            bool assert = true;
+            int interval = 15;
+            // Initialize test cases
+            cA.start();
+            cV.start();
+            Logger::log("Dynamic Test started");
+            pc.printf("\n\rDynamic Test started!\n\r");
+            
+            // Test normal operation
+            wait_for(AP);
+            cA.reset();
+            wait_for(VP);
+            int AVI = update_AVI(cA.read_ms());
+            cV.reset();
+            assert = assert & wait_assert(0x0000,
+                max(PVARP - cV.read_ms(),
+                    URI - AVI - cV.read_ms()));
+            send_AS();
+            cA.reset();
+            assert = assert & wait_assert(0x0000,
+                max(URI - cV.read_ms(), 
+                    max(VRP - cV.read_ms(),
+                        AVI_min - cA.read_ms())));
+            AVI = update_AVI(cA.read_ms());
+            send_VS();
+            cV.reset();
+            assert = assert & wait_assert(0x0000,
+                LRI - AVI - cV.read_ms() - interval);
+            send_AS();
+            cA.reset();
+            assert = assert & wait_assert(0x0000,
+                min(LRI - cV.read_ms(),
+                    AVI - cA.read_ms()) - interval);
+            AVI = update_AVI(cA.read_ms());
+            send_VS();
+            cV.reset();
+            report(assert);
+            // Test VS exceeds time
+            wait_for(AP);
+            cA.reset();
+            wait_for(VP);
+            AVI = update_AVI(cA.read_ms());
+            cV.reset();
+            assert = true;
+            assert = assert & wait_assert(0x0000,
+                PVARP - cV.read_ms());
+            send_AS();
+            cA.reset();
+            assert = assert & wait_assert(VP,
+                min(LRI - cV.read_ms(), AVI - cA.read_ms()) + interval);
+            AVI = update_AVI(cA.read_ms());
+            cV.reset();
+            send_VS();
+            assert = assert & wait_assert(AP,
+                LRI - AVI_min - cV.read_ms() + interval);
+            cA.reset();
+            report(assert);
+            // Test AS exceeds time
+            wait_for(VP);
+            AVI = update_AVI(cA.read_ms());
+            cV.reset();
+            wait_for(AP);
+            cA.reset();
+            wait_for(VP);
+            AVI = update_AVI(cA.read_ms());
+            cV.reset();
+            assert = true;
+            assert = assert & wait_assert(AP,
+                LRI - AVI_min - cV.read_ms() + interval);
+            
+            cA.reset();
+            send_AS();
+            assert = assert & wait_assert(VP, 
+                min(LRI - cV.read_ms(),
+                    AVI - cA.read_ms()) + interval);
+            AVI = update_AVI(cA.read_ms());
+            cV.reset();
+            report(assert);
+            // Test AS too soon
+            wait_for(AP);
+            cA.reset();
+            wait_for(VP);
+            AVI = update_AVI(cA.read_ms());
+            cV.reset();
+            assert = true;
+            send_AS();
+            assert = assert & wait_assert(AP,
+                AVI - LRI - cV.read_ms());
+            cA.reset();
+            report(assert);
+            // Test VS too soon
+            wait_for(VP);
+            AVI = update_AVI(cA.read_ms());
+            cV.reset();
+            wait_for(AP);
+            cA.reset();
+            wait_for(VP);
+            AVI = update_AVI(cA.read_ms());
+            cV.reset();
+            assert = true;
+            assert = assert & wait_assert(0x0000,
+                PVARP - cV.read_ms());
+            send_AS();
+            cA.reset();
+            send_VS();
+            assert = assert & wait_assert(VP,
+                min(LRI - cV.read_ms(),
+                    AVI - cA.read_ms()) + interval);
+            AVI = update_AVI(cA.read_ms());
+            report(assert);
+            // Tests are complete
+            Logger::log("Test finished");
+            cA.stop();
+            cV.stop();
+            cA.reset();
+            cV.reset();
+            pc.puts("Tests complete!\n");
+            keyboard_addr->signal_set(INPUT_READY);
+            heart_mode = RANDOM;
+        } else if (heart_mode == EXTENDED_TEST) {
+            bool assert = true;
+            int interval = 15;
+            // Initialize test cases
+            cA.start();
+            cV.start();
+            Logger::log("Extended Test started");
+            pc.printf("\n\rExtended Test started!\n\r");
+            
+            // Test one VS too soon, AS too soon
+            wait_for(AP);
+            cA.reset();
+            wait_for(VP);
+            cV.reset();
+            assert = true;
+            assert = assert & wait_assert(0x0000,
+                URI - cV.read_ms());
+            // Generate V before A
+            send_VS();
+            // Send A after PVARP, but before PVARP + EXTEND
+            assert = assert & wait_assert(0x0000, PVARP);
+            send_AS();
+            assert = assert & wait_assert(AP, 0);
+            report(assert);
+            
+            // Test one VS too soon, AS on time
+            wait_for(AP);
+            cA.reset();
+            wait_for(VP);
+            cV.reset();
+            assert = true;
+            assert = assert & wait_assert(0x0000,
+                URI - cV.read_ms());
+            // Generate V before A
+            send_VS();
+            // Send A after PVARP, but before PVARP + EXTEND
+            assert = assert & wait_assert(0x0000, PVARP + 50);
+            send_AS();
+            assert = assert & wait_assert(VP, 0);
+            report(assert);
+            
+            // Tests are complete
+            Logger::log("Test finished");
+            cA.stop();
+            cV.stop();
+            cA.reset();
+            cV.reset();
+            pc.puts("Tests complete!\n");
+            keyboard_addr->signal_set(INPUT_READY);
+            heart_mode = RANDOM;
         }
     }
 }
@@ -410,25 +608,25 @@ void log_thread(void const * args) {
         osEvent sig = Thread::signal_wait(0x00);
         int signum = sig.value.signals;
         if (signum & AP) {
-            if (heart_mode == TEST)
+            if (heart_mode == TEST || heart_mode == DYNAMIC_TEST || heart_mode == EXTENDED_TEST)
                 pc.printf("\n\rAP: %d", t_global.read_ms());
             sprintf(buffer, "AP: cv - %d | ca - %d | t - %d",
                 cV.read_ms(), cA.read_ms(), t_global.read_ms());
             Logger::log(buffer);
         } else if (signum & VP) {
-            if (heart_mode == TEST)
+            if (heart_mode == TEST || heart_mode == DYNAMIC_TEST || heart_mode == EXTENDED_TEST)
                 pc.printf("\n\rVP: %d", t_global.read_ms());
             sprintf(buffer, "VP: cv - %d | ca - %d | t - %d",
                 cV.read_ms(), cA.read_ms(), t_global.read_ms());
             Logger::log(buffer);
         } else if (signum & AS) {
-            if (heart_mode == TEST)
+            if (heart_mode == TEST || heart_mode == DYNAMIC_TEST || heart_mode == EXTENDED_TEST)
                 pc.printf("\n\rAS: %d", t_global.read_ms());
             sprintf(buffer, "AS: cv - %d | ca - %d | t - %d",
                 cV.read_ms(), cA.read_ms(), t_global.read_ms());
             Logger::log(buffer);
         } else if (signum & VS) {
-            if (heart_mode == TEST)
+            if (heart_mode == TEST || heart_mode == DYNAMIC_TEST || heart_mode == EXTENDED_TEST)
                 pc.printf("\n\rVS: %d", t_global.read_ms());
             sprintf(buffer, "VS: cv - %d | ca - %d | t - %d",
                 cV.read_ms(), cA.read_ms(), t_global.read_ms());
